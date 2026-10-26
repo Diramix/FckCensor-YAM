@@ -29,8 +29,10 @@ def build():
     bin_dir.mkdir(parents=True)
     lib_dir.mkdir()
     env = dict(os.environ, CGO_ENABLED='0', GOOS='linux', GOARCH='arm64')
-    subprocess.run(['go', 'build', '-trimpath', '-ldflags=-s -w', '-o', str(bin_dir / 'fckcensor'), './cmd/fckcensor'], env=env, check=True)
-    subprocess.run(['clang', '--target=armv7-linux-gnueabihf', '-mthumb', '-O2', '-fPIC', '-shared', '-nostdlib', '-fuse-ld=lld', '-fomit-frame-pointer', '-Wl,-soname,libfckcensor.so', '-o', str(lib_dir / 'libfckcensor.so'), 'native/hook.c'], check=True)
+    subprocess.run(['go', 'build', '-trimpath', '-gcflags=all=-l', '-ldflags=-s -w -buildid=', '-o', str(bin_dir / 'fckcensor'), './cmd/fckcensor'], env=env, check=True)
+    if shutil.which('upx'):
+        subprocess.run(['upx', '--best', '--lzma', '-q', str(bin_dir / 'fckcensor')], check=True)
+    subprocess.run(['clang', '--target=armv7-linux-gnueabihf', '-mthumb', '-Os', '-fPIC', '-ffunction-sections', '-fdata-sections', '-shared', '-nostdlib', '-fuse-ld=lld', '-fomit-frame-pointer', '-Wl,--gc-sections,-s,-soname,libfckcensor.so', '-o', str(lib_dir / 'libfckcensor.so'), 'native/hook.c'], check=True)
     for name in ('plugin.toml', 'start.sh'):
         shutil.copy2(root / name, staging / name)
     (staging / 'start.sh').chmod(0o755)
