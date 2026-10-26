@@ -1,0 +1,14 @@
+id = "fckcensor"
+name = "FckCensor"
+version = "1.0.0"
+entry = "start.sh"
+permissions = ["exec"]
+
+[launch]
+kind = "binary"
+mode = "service"
+path = "start.sh"
+interpreter = "sh"
+
+[compatibility]
+features = ["arch.aarch64"]
