@@ -62,7 +62,15 @@ func newClient() *http.Client {
 }
 
 func fetchList(client *http.Client) (map[string]string, []byte, error) {
-	response, err := client.Get(replacements.Source)
+	return fetchListContext(context.Background(), client)
+}
+
+func fetchListContext(ctx context.Context, client *http.Client) (map[string]string, []byte, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, replacements.Source, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	response, err := client.Do(request)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -79,6 +87,30 @@ func fetchList(client *http.Client) (map[string]string, []byte, error) {
 	}
 	index, err := replacements.Build(data)
 	return index, data, err
+}
+
+func waitForList(ctx context.Context, client *http.Client, delay time.Duration) (map[string]string, []byte, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		index, data, err := fetchListContext(ctx, client)
+		if err == nil {
+			return index, data, nil
+		}
+		if ctx.Err() != nil {
+			return nil, nil, ctx.Err()
+		}
+		log.Printf("replacement list unavailable: %v; retrying in %s", err, delay)
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, nil, ctx.Err()
+		case <-timer.C:
+		}
+		delay = min(delay*2, 10*time.Second)
+	}
 }
 
 func fetchIndex(client *http.Client) (map[string]string, error) {
@@ -112,7 +144,7 @@ func (s *service) refreshLoop(ctx context.Context, current []byte) {
 			return
 		case <-ticker.C:
 		}
-		index, data, err := fetchList(s.client)
+		index, data, err := fetchListContext(ctx, s.client)
 		if err != nil {
 			log.Printf("replacement list refresh failed: %v", err)
 			continue
@@ -418,14 +450,6 @@ func serve(library string, attach bool, resetPlayer bool) error {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
-	client := newClient()
-	index, list, err := fetchList(client)
-	if err != nil {
-		return err
-	}
-	log.Printf("loaded %d replacement tracks", len(index))
-	s := &service{index: index, client: client, pending: map[string]*pendingDownload{}, streamClient: streamingClient()}
-	s.recovery = newRecovery(s)
 	lock, err := os.OpenFile(filepath.Join(stateDir, "service.lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return err
@@ -434,6 +458,14 @@ func serve(library string, attach bool, resetPlayer bool) error {
 	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		return errors.New("another instance is running")
 	}
+	client := newClient()
+	index, list, err := waitForList(ctx, client, time.Second)
+	if err != nil {
+		return err
+	}
+	log.Printf("loaded %d replacement tracks", len(index))
+	s := &service{index: index, client: client, pending: map[string]*pendingDownload{}, streamClient: streamingClient()}
+	s.recovery = newRecovery(s)
 	socketPath := filepath.Join(stateDir, "control.sock")
 	os.Remove(socketPath)
 	listener, err := net.Listen("unix", socketPath)
