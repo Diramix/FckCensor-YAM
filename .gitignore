@@ -5,5 +5,3 @@ __pycache__/
 *.log
 .DS_Store
 Thumbs.db
-.vscode/*
-!.vscode/tasks.json
